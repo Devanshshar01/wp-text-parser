@@ -13,15 +13,17 @@ export function normalizeMediaFilename(name: string): string {
 
 /**
  * Fast header matching with initial character fast-guards to avoid running regexes on every continuation line.
+ * Handles LRM (\u200e), RLM (\u200f), BOM (\ufeff) invisible Unicode prefix characters from iOS exports.
  */
 export function parseMessageHeaderLine(line: string): HeaderMatch | null {
-  if (line.length < 10) return null;
+  const cleaned = line.replace(/^[\u200e\u200f\u200b-\u200d\ufeff]+/g, '');
+  if (cleaned.length < 10) return null;
 
-  const firstChar = line.charCodeAt(0);
+  const firstChar = cleaned.charCodeAt(0);
 
   // 1. iOS style starting with '['
   if (firstChar === 91) { // '['
-    const iosBracketMatch = line.match(/^\[(\d{1,4}[./\-]\d{1,2}[./\-]\d{1,4}),?\s+(\d{1,2}:\d{2}(?::\d{2})?(?:\s*[APap][Mm])?)\]\s*(.*)$/);
+    const iosBracketMatch = cleaned.match(/^\[(\d{1,4}[./\-]\d{1,2}[./\-]\d{1,4}),?\s+(\d{1,2}:\d{2}(?::\d{2})?(?:\s*[APap][Mm])?)\]\s*(.*)$/);
     if (iosBracketMatch) {
       return {
         dateStr: iosBracketMatch[1],
@@ -33,7 +35,7 @@ export function parseMessageHeaderLine(line: string): HeaderMatch | null {
 
   // 2. Standard / Android style starting with digit (0-9)
   if (firstChar >= 48 && firstChar <= 57) {
-    const standardMatch = line.match(/^(\d{1,4}[./\-]\d{1,2}[./\-]\d{1,4}),?\s+(\d{1,2}:\d{2}(?::\d{2})?(?:\s*[APap]\.?\s*[Mm]\.?)?)\s*[-~–—]\s*(.*)$/);
+    const standardMatch = cleaned.match(/^(\d{1,4}[./\-]\d{1,2}[./\-]\d{1,4}),?\s+(\d{1,2}:\d{2}(?::\d{2})?(?:\s*[APap]\.?\s*[Mm]\.?)?)\s*[-~–—]\s*(.*)$/);
     if (standardMatch) {
       return {
         dateStr: standardMatch[1],
@@ -60,10 +62,9 @@ export function parseWhatsAppDateTime(dateStr: string, timeStr: string): Date {
       month = dateParts[1];
       day = dateParts[2];
     } else {
-      if (dateParts[2] > 31) {
-        year = dateParts[2];
-        if (dateParts[2] < 100) year += 2000;
-      }
+      year = dateParts[2];
+      if (year < 100) year += 2000;
+
       if (dateParts[0] > 12) {
         day = dateParts[0];
         month = dateParts[1];
@@ -115,21 +116,8 @@ export function parseBodyContent(body: string): {
 } {
   const colonIdx = body.indexOf(':');
 
-  const isSystemNotice =
-    body.includes('Messages and calls are end-to-end encrypted') ||
-    body.includes('created group') ||
-    body.includes('added') ||
-    body.includes('removed') ||
-    body.includes('left') ||
-    body.includes('changed the group') ||
-    body.includes('changed the subject') ||
-    body.includes('changed this group') ||
-    body.includes('Security code changed') ||
-    body.includes('You deleted this message') ||
-    body.includes('This message was deleted') ||
-    body.includes('disappearing messages');
-
-  if (colonIdx === -1 || (isSystemNotice && !body.slice(0, colonIdx).includes(' '))) {
+  // No colon = System message (e.g. "Messages and calls are end-to-end encrypted", "Alex created group...")
+  if (colonIdx === -1) {
     return {
       isSystem: true,
       text: body,
@@ -140,7 +128,14 @@ export function parseBodyContent(body: string): {
   const possibleSender = body.slice(0, colonIdx).trim();
   const textContent = body.slice(colonIdx + 1).trim();
 
-  if (!possibleSender || possibleSender.length > 50) {
+  // If text before colon is longer than typical sender names or looks like a system header line without sender
+  const isSystemPhraseWithoutSender =
+    body.startsWith('Messages and calls are end-to-end encrypted') ||
+    body.startsWith('Security code changed') ||
+    body.startsWith('You deleted this message') ||
+    body.startsWith('This message was deleted');
+
+  if (!possibleSender || possibleSender.length > 50 || isSystemPhraseWithoutSender) {
     return {
       isSystem: true,
       text: body,
@@ -212,7 +207,6 @@ function generateMessageId(index: number, timestamp: Date): string {
 }
 
 export function parseWhatsAppExport(rawText: string): ParsedChat {
-  // Split efficiently without regex overhead
   const lines = rawText.split(/\r?\n/);
 
   const messages: Message[] = [];
@@ -231,8 +225,7 @@ export function parseWhatsAppExport(rawText: string): ParsedChat {
 
   for (let i = 0; i < lines.length; i++) {
     const line = lines[i];
-    // Strip invisible BOM / zero width spaces
-    const cleanedLine = line.charCodeAt(0) === 0xfeff ? line.slice(1) : line;
+    const cleanedLine = line.replace(/^[\u200e\u200f\u200b-\u200d\ufeff]+/g, '');
 
     const headerMatch = parseMessageHeaderLine(cleanedLine);
 
@@ -297,7 +290,6 @@ export function parseWhatsAppExport(rawText: string): ParsedChat {
     ? participants.join(' & ')
     : 'WhatsApp Chat';
 
-  // Single pass statistics computation
   const stats: ChatStats = {
     totalMessages: messages.length,
     textMessages: 0,

@@ -68,30 +68,46 @@ export default function ChatMessagesList() {
   };
 
   const handleJumpToDate = (e: React.ChangeEvent<HTMLInputElement>) => {
-    const targetDateStr = e.target.value;
+    const targetDateStr = e.target.value; // "YYYY-MM-DD"
     setSelectedJumpDate(targetDateStr);
     if (!chat || !targetDateStr) return;
 
-    const targetDate = new Date(targetDateStr);
-    const targetIdx = chat.messages.findIndex(
-      (m) =>
-        m.timestamp.getFullYear() === targetDate.getFullYear() &&
-        m.timestamp.getMonth() === targetDate.getMonth() &&
-        m.timestamp.getDate() === targetDate.getDate()
-    );
+    const parts = targetDateStr.split('-').map((p) => parseInt(p, 10));
+    if (parts.length !== 3) return;
+
+    const targetYear = parts[0];
+    const targetMonth = parts[1] - 1; // 0-indexed month
+    const targetDay = parts[2];
+
+    const targetTime = new Date(targetYear, targetMonth, targetDay).getTime();
+
+    // Find exact or closest message on or after the target date
+    let targetIdx = chat.messages.findIndex((m) => {
+      const d = m.timestamp;
+      return (
+        d.getFullYear() === targetYear &&
+        d.getMonth() === targetMonth &&
+        d.getDate() === targetDay
+      );
+    });
+
+    if (targetIdx === -1) {
+      targetIdx = chat.messages.findIndex((m) => m.timestamp.getTime() >= targetTime);
+    }
 
     if (targetIdx !== -1) {
       const neededFromEnd = chat.messages.length - targetIdx;
-      if (neededFromEnd > visibleCount) {
-        setVisibleCount(neededFromEnd + 20);
-      }
-      setTimeout(() => {
-        const targetMsg = chat.messages[targetIdx];
-        const elem = document.getElementById(targetMsg.id);
-        if (elem) {
-          elem.scrollIntoView({ behavior: 'smooth', block: 'start' });
-        }
-      }, 100);
+      setVisibleCount((prev) => Math.max(prev, neededFromEnd + 20));
+
+      const targetMsg = chat.messages[targetIdx];
+      requestAnimationFrame(() => {
+        setTimeout(() => {
+          const elem = document.getElementById(targetMsg.id);
+          if (elem) {
+            elem.scrollIntoView({ behavior: 'smooth', block: 'start' });
+          }
+        }, 100);
+      });
     }
   };
 
