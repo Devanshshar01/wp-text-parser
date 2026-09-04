@@ -15,6 +15,8 @@ interface ChatContextType {
   activeView: 'chat' | 'gallery' | 'info' | 'stats';
   activeLightboxMedia: { url: string; filename?: string; type: 'image' | 'video' } | null;
   theme: 'light' | 'dark';
+  wallpaper: string;
+  setWallpaper: (wallpaper: string) => void;
   setSelfParticipant: (participant: string) => void;
   loadChatData: (data: {
     chat: ParsedChat;
@@ -49,6 +51,7 @@ export function ChatProvider({ children }: { children: ReactNode }) {
     type: 'image' | 'video';
   } | null>(null);
   const [theme, setTheme] = useState<'light' | 'dark'>('light');
+  const [wallpaper, setWallpaper] = useState<string>('doodle');
 
   useEffect(() => {
     if (typeof window !== 'undefined') {
@@ -147,6 +150,8 @@ export function ChatProvider({ children }: { children: ReactNode }) {
         activeView,
         activeLightboxMedia,
         theme,
+        wallpaper,
+        setWallpaper,
         setSelfParticipant,
         loadChatData,
         clearChatData,
