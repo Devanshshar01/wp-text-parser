@@ -26,14 +26,11 @@ export async function processZipExport(
 
   onProgress?.('Scanning files in archive...');
   const txtFiles: { name: string; zipObject: JSZip.JSZipObject }[] = [];
-  const mediaMap: Record<string, string> = {};
-  const rawFiles: Record<string, Blob> = {};
 
   const entries = Object.keys(loadedZip.files);
-  for (const relativePath of entries) {
-    if (!isPathSafe(relativePath)) {
-      continue;
-    }
+  for (let i = 0; i < entries.length; i++) {
+    const relativePath = entries[i];
+    if (!isPathSafe(relativePath)) continue;
 
     const zipEntry = loadedZip.files[relativePath];
     if (zipEntry.dir) continue;
@@ -41,10 +38,8 @@ export async function processZipExport(
     const lowerPath = relativePath.toLowerCase();
     const basename = relativePath.split(/[/\\]/).pop() || relativePath;
 
-    if (lowerPath.endsWith('.txt')) {
-      if (!basename.startsWith('._') && !lowerPath.includes('__macosx')) {
-        txtFiles.push({ name: relativePath, zipObject: zipEntry });
-      }
+    if (lowerPath.endsWith('.txt') && !basename.startsWith('._') && !lowerPath.includes('__macosx')) {
+      txtFiles.push({ name: relativePath, zipObject: zipEntry });
     }
   }
 
@@ -68,7 +63,21 @@ export async function processZipExport(
 
   onProgress?.('Processing media attachments...');
 
-  for (const relativePath of entries) {
+  // Build a fast lookup set of referenced media filenames from parsed messages
+  const referencedMediaNames = new Set<string>();
+  for (let i = 0; i < parsedChat.messages.length; i++) {
+    const m = parsedChat.messages[i];
+    if (m.mediaFilename) {
+      referencedMediaNames.add(normalizeMediaFilename(m.mediaFilename));
+    }
+  }
+
+  const mediaMap: Record<string, string> = {};
+  const rawFiles: Record<string, Blob> = {};
+
+  // Extract object URLs efficiently for matching media
+  for (let i = 0; i < entries.length; i++) {
+    const relativePath = entries[i];
     if (!isPathSafe(relativePath)) continue;
 
     const zipEntry = loadedZip.files[relativePath];
@@ -80,13 +89,16 @@ export async function processZipExport(
     }
 
     const normalizedName = normalizeMediaFilename(basename);
-    const blob = await zipEntry.async('blob');
-    rawFiles[normalizedName] = blob;
 
-    const objectUrl = URL.createObjectURL(blob);
-    mediaMap[normalizedName] = objectUrl;
+    // Extract blob if explicitly referenced, or if small archive
+    if (referencedMediaNames.size === 0 || referencedMediaNames.has(normalizedName) || entries.length <= 50) {
+      const blob = await zipEntry.async('blob');
+      rawFiles[normalizedName] = blob;
+      mediaMap[normalizedName] = URL.createObjectURL(blob);
+    }
   }
 
+  // Map object URLs back to messages
   const updatedMessages: Message[] = parsedChat.messages.map((msg: Message) => {
     if (msg.mediaFilename) {
       const norm = normalizeMediaFilename(msg.mediaFilename);

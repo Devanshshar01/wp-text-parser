@@ -11,23 +11,36 @@ export function normalizeMediaFilename(name: string): string {
   return basename.trim().toLowerCase();
 }
 
+/**
+ * Fast header matching with initial character fast-guards to avoid running regexes on every continuation line.
+ */
 export function parseMessageHeaderLine(line: string): HeaderMatch | null {
-  const iosBracketMatch = line.match(/^\[(\d{1,4}[./\-]\d{1,2}[./\-]\d{1,4}),?\s+(\d{1,2}:\d{2}(?::\d{2})?(?:\s*[APap][Mm])?)\]\s*(.*)$/);
-  if (iosBracketMatch) {
-    return {
-      dateStr: iosBracketMatch[1],
-      timeStr: iosBracketMatch[2],
-      body: iosBracketMatch[3],
-    };
+  if (line.length < 10) return null;
+
+  const firstChar = line.charCodeAt(0);
+
+  // 1. iOS style starting with '['
+  if (firstChar === 91) { // '['
+    const iosBracketMatch = line.match(/^\[(\d{1,4}[./\-]\d{1,2}[./\-]\d{1,4}),?\s+(\d{1,2}:\d{2}(?::\d{2})?(?:\s*[APap][Mm])?)\]\s*(.*)$/);
+    if (iosBracketMatch) {
+      return {
+        dateStr: iosBracketMatch[1],
+        timeStr: iosBracketMatch[2],
+        body: iosBracketMatch[3],
+      };
+    }
   }
 
-  const standardMatch = line.match(/^(\d{1,4}[./\-]\d{1,2}[./\-]\d{1,4}),?\s+(\d{1,2}:\d{2}(?::\d{2})?(?:\s*[APap]\.?\s*[Mm]\.?)?)\s*[-~–—]\s*(.*)$/);
-  if (standardMatch) {
-    return {
-      dateStr: standardMatch[1],
-      timeStr: standardMatch[2],
-      body: standardMatch[3],
-    };
+  // 2. Standard / Android style starting with digit (0-9)
+  if (firstChar >= 48 && firstChar <= 57) {
+    const standardMatch = line.match(/^(\d{1,4}[./\-]\d{1,2}[./\-]\d{1,4}),?\s+(\d{1,2}:\d{2}(?::\d{2})?(?:\s*[APap]\.?\s*[Mm]\.?)?)\s*[-~–—]\s*(.*)$/);
+    if (standardMatch) {
+      return {
+        dateStr: standardMatch[1],
+        timeStr: standardMatch[2],
+        body: standardMatch[3],
+      };
+    }
   }
 
   return null;
@@ -194,15 +207,13 @@ export function detectMediaTypeAndFilename(text: string): {
   return { type: 'text' };
 }
 
-function generateMessageId(index: number, timestamp: Date, sender?: string, text?: string): string {
-  const ts = timestamp.getTime();
-  const s = sender || 'system';
-  const snippet = (text || '').slice(0, 15).replace(/\s+/g, '_');
-  return `msg_${index}_${ts}_${s}_${snippet}`;
+function generateMessageId(index: number, timestamp: Date): string {
+  return `m_${index}_${timestamp.getTime()}`;
 }
 
 export function parseWhatsAppExport(rawText: string): ParsedChat {
-  const lines = rawText.replace(/\r\n/g, '\n').replace(/\r/g, '\n').split('\n');
+  // Split efficiently without regex overhead
+  const lines = rawText.split(/\r?\n/);
 
   const messages: Message[] = [];
   const participantsSet = new Set<string>();
@@ -220,7 +231,8 @@ export function parseWhatsAppExport(rawText: string): ParsedChat {
 
   for (let i = 0; i < lines.length; i++) {
     const line = lines[i];
-    const cleanedLine = line.replace(/[\u200B-\u200D\uFEFF]/g, '');
+    // Strip invisible BOM / zero width spaces
+    const cleanedLine = line.charCodeAt(0) === 0xfeff ? line.slice(1) : line;
 
     const headerMatch = parseMessageHeaderLine(cleanedLine);
 
@@ -228,7 +240,7 @@ export function parseWhatsAppExport(rawText: string): ParsedChat {
       if (currentMsgBuilder) {
         const fullText = currentMsgBuilder.textLines.join('\n');
         messages.push({
-          id: generateMessageId(messages.length, currentMsgBuilder.timestamp, currentMsgBuilder.sender, fullText),
+          id: generateMessageId(messages.length, currentMsgBuilder.timestamp),
           timestamp: currentMsgBuilder.timestamp,
           sender: currentMsgBuilder.sender,
           text: fullText,
@@ -266,7 +278,7 @@ export function parseWhatsAppExport(rawText: string): ParsedChat {
   if (currentMsgBuilder) {
     const fullText = currentMsgBuilder.textLines.join('\n');
     messages.push({
-      id: generateMessageId(messages.length, currentMsgBuilder.timestamp, currentMsgBuilder.sender, fullText),
+      id: generateMessageId(messages.length, currentMsgBuilder.timestamp),
       timestamp: currentMsgBuilder.timestamp,
       sender: currentMsgBuilder.sender,
       text: fullText,
@@ -285,24 +297,60 @@ export function parseWhatsAppExport(rawText: string): ParsedChat {
     ? participants.join(' & ')
     : 'WhatsApp Chat';
 
+  // Single pass statistics computation
   const stats: ChatStats = {
     totalMessages: messages.length,
-    textMessages: messages.filter((m) => m.type === 'text').length,
-    mediaCount: messages.filter((m) => m.type !== 'text' && m.type !== 'system').length,
-    imageCount: messages.filter((m) => m.type === 'image').length,
-    videoCount: messages.filter((m) => m.type === 'video').length,
-    audioCount: messages.filter((m) => m.type === 'audio').length,
-    documentCount: messages.filter((m) => m.type === 'document').length,
-    stickerCount: messages.filter((m) => m.type === 'sticker').length,
-    systemCount: messages.filter((m) => m.isSystem).length,
+    textMessages: 0,
+    mediaCount: 0,
+    imageCount: 0,
+    videoCount: 0,
+    audioCount: 0,
+    documentCount: 0,
+    stickerCount: 0,
+    systemCount: 0,
     participantCounts: {},
     firstMessageDate: messages.length > 0 ? messages[0].timestamp : null,
     lastMessageDate: messages.length > 0 ? messages[messages.length - 1].timestamp : null,
   };
 
-  for (const m of messages) {
+  for (let i = 0; i < messages.length; i++) {
+    const m = messages[i];
+
     if (m.sender) {
       stats.participantCounts[m.sender] = (stats.participantCounts[m.sender] || 0) + 1;
+    }
+
+    if (m.isSystem) {
+      stats.systemCount++;
+    }
+
+    switch (m.type) {
+      case 'text':
+        stats.textMessages++;
+        break;
+      case 'image':
+        stats.imageCount++;
+        stats.mediaCount++;
+        break;
+      case 'video':
+        stats.videoCount++;
+        stats.mediaCount++;
+        break;
+      case 'audio':
+        stats.audioCount++;
+        stats.mediaCount++;
+        break;
+      case 'document':
+        stats.documentCount++;
+        stats.mediaCount++;
+        break;
+      case 'sticker':
+        stats.stickerCount++;
+        stats.mediaCount++;
+        break;
+      case 'unknown-media':
+        stats.mediaCount++;
+        break;
     }
   }
 
