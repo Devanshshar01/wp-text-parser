@@ -70,6 +70,14 @@ export default function ChatHeader() {
     }
   };
 
+  const handleBackClick = () => {
+    if (activeView !== 'chat') {
+      setActiveView('chat');
+    } else {
+      setShowExitConfirm(true);
+    }
+  };
+
   const handleConfirmExit = () => {
     setShowExitConfirm(false);
     clearChatData();
@@ -118,8 +126,8 @@ export default function ChatHeader() {
         <div className="flex items-center gap-2 min-w-0 flex-1">
           <button
             type="button"
-            onClick={() => setShowExitConfirm(true)}
-            title="Load another chat archive"
+            onClick={handleBackClick}
+            title={activeView === 'chat' ? 'Load another chat archive' : 'Back to chat conversation'}
             className="p-1.5 text-white/90 hover:bg-white/10 rounded-full transition-colors shrink-0"
           >
             <ArrowLeft className="w-5 h-5" />
