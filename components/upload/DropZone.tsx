@@ -7,7 +7,7 @@ import { processZipExport } from '@/lib/media';
 import { getSampleChatData } from '@/lib/sample';
 import { useChat } from '@/context/ChatContext';
 
-const MAX_FILE_SIZE_MB = 200;
+const MAX_FILE_SIZE_MB = 800;
 const MAX_FILE_SIZE_BYTES = MAX_FILE_SIZE_MB * 1024 * 1024;
 
 export default function DropZone() {
@@ -26,8 +26,12 @@ export default function DropZone() {
     }
 
     const lowerName = file.name.toLowerCase();
-    const isTxt = lowerName.endsWith('.txt');
-    const isZip = lowerName.endsWith('.zip');
+    const isTxt = lowerName.endsWith('.txt') || file.type === 'text/plain';
+    const isZip =
+      lowerName.endsWith('.zip') ||
+      file.type === 'application/zip' ||
+      file.type === 'application/x-zip-compressed' ||
+      file.type === 'application/zip-compressed';
 
     if (!isTxt && !isZip) {
       setErrorMsg('Unsupported file format. Please upload a WhatsApp export .txt file or .zip archive.');
@@ -35,7 +39,7 @@ export default function DropZone() {
     }
 
     try {
-      if (isTxt) {
+      if (isTxt && !lowerName.endsWith('.zip')) {
         setLoadingStage('Reading export file...');
         const text = await file.text();
         setLoadingStage('Parsing messages...');
@@ -49,7 +53,7 @@ export default function DropZone() {
 
         setLoadingStage('Preparing chat...');
         loadChatData({ chat });
-      } else if (isZip) {
+      } else {
         const extracted = await processZipExport(file, (stage) => setLoadingStage(stage));
 
         if (extracted.chat.messages.length === 0) {
@@ -124,7 +128,7 @@ export default function DropZone() {
           WhatsApp Chat Archive Viewer
         </h1>
         <p className="text-slate-600 dark:text-slate-300 text-sm sm:text-base max-w-lg mx-auto">
-          Export a chat from WhatsApp and upload the .txt or .zip file here to view your conversation in a familiar interface.
+          Export a chat from WhatsApp and upload the .txt or .zip file here (up to 800MB) to view your conversation in a familiar interface.
         </p>
       </div>
 
@@ -156,7 +160,7 @@ export default function DropZone() {
         <input
           ref={fileInputRef}
           type="file"
-          accept=".txt,.zip"
+          accept=".txt,.zip,application/zip,application/x-zip-compressed,text/plain"
           onChange={handleFileChange}
           className="hidden"
         />
@@ -175,7 +179,7 @@ export default function DropZone() {
               Drop your WhatsApp export here
             </p>
             <p className="text-xs text-slate-500 dark:text-slate-400 mb-4">
-              or click to browse from your device
+              or click to browse from your device (Max {MAX_FILE_SIZE_MB}MB)
             </p>
             <div className="flex items-center gap-3 text-xs text-slate-500 dark:text-slate-400">
               <span className="flex items-center gap-1 bg-slate-100 dark:bg-slate-800 px-2.5 py-1 rounded-md">
