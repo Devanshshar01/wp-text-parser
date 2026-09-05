@@ -116,7 +116,7 @@ export function getMimeType(filename: string, fallbackType?: string): string {
 }
 
 /**
- * Build multi-strategy media index map from imported files.
+ * Fast multi-strategy media index map builder.
  */
 export function buildMediaIndex(
   files: ImportedFile[]
@@ -135,7 +135,7 @@ export function buildMediaIndex(
     const ext = basename.split('.').pop()?.toLowerCase() || '';
 
     const asset: MediaAsset = {
-      id: `asset_${i}_${Date.now()}`,
+      id: `asset_${i}`,
       file: f.file,
       filename: basename,
       relativePath: f.relativePath,
@@ -144,17 +144,18 @@ export function buildMediaIndex(
       size: f.size,
     };
 
-    // Store in index under multiple variations for multi-strategy matching
+    // Store in index under multiple variations for constant time lookup
     indexMap.set(normalizedKey, asset);
     indexMap.set(basename.toLowerCase(), asset);
     indexMap.set(f.relativePath.toLowerCase(), asset);
 
-    // Decode URI component if escaped spaces exist
-    try {
-      const decoded = decodeURIComponent(basename).toLowerCase();
-      indexMap.set(decoded, asset);
-    } catch {
-      // ignore decode error
+    if (basename.includes('%')) {
+      try {
+        const decoded = decodeURIComponent(basename).toLowerCase();
+        indexMap.set(decoded, asset);
+      } catch {
+        // ignore decode error
+      }
     }
   }
 
@@ -162,7 +163,7 @@ export function buildMediaIndex(
 }
 
 /**
- * Process folder/file uploads or TXT files directly.
+ * Process folder/file uploads or TXT files directly with optimized matching.
  */
 export async function processImportedFiles(
   importedFiles: ImportedFile[],
@@ -170,10 +171,14 @@ export async function processImportedFiles(
 ): Promise<ExtractedExport> {
   onProgress?.('Reading files...');
 
-  const txtFiles = importedFiles.filter((f) => {
+  const txtFiles: ImportedFile[] = [];
+  for (let i = 0; i < importedFiles.length; i++) {
+    const f = importedFiles[i];
     const lower = f.name.toLowerCase();
-    return lower.endsWith('.txt') && !lower.startsWith('._') && !f.relativePath.includes('__MACOSX');
-  });
+    if (lower.endsWith('.txt') && !lower.startsWith('._') && !f.relativePath.includes('__MACOSX')) {
+      txtFiles.push(f);
+    }
+  }
 
   if (txtFiles.length === 0) {
     throw new Error('We couldn\'t find a WhatsApp chat export (.txt file) in the uploaded files.');
@@ -194,7 +199,11 @@ export async function processImportedFiles(
   let matchedCount = 0;
 
   const updatedMessages: Message[] = parsedChat.messages.map((msg: Message) => {
-    // Extract media filenames referenced in message
+    // Fast-path: if text message has no media reference indicators, return early
+    if (msg.type === 'text' && !msg.mediaFilename) {
+      return msg;
+    }
+
     const referencedMedia = extractAllMediaFilenames(msg.text || '');
     if (msg.mediaFilename && !referencedMedia.some((m) => m.filename === msg.mediaFilename)) {
       referencedMedia.unshift({
@@ -209,7 +218,8 @@ export async function processImportedFiles(
 
     const matchedAssets: MediaAsset[] = [];
 
-    for (const ref of referencedMedia) {
+    for (let i = 0; i < referencedMedia.length; i++) {
+      const ref = referencedMedia[i];
       const normKey = normalizeMediaFilename(ref.filename);
       const matchedAsset = mediaIndex.get(normKey) || mediaIndex.get(ref.filename.toLowerCase());
 

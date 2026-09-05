@@ -122,7 +122,7 @@ export default function DropZone() {
     }
   };
 
-  // Drag and drop directory entry scanner
+  // Fast concurrent drag and drop directory entry scanner
   const handleDrop = async (e: DragEvent<HTMLDivElement>) => {
     e.preventDefault();
     e.stopPropagation();
@@ -134,40 +134,53 @@ export default function DropZone() {
     setLoadingStage('Reading dropped items...');
     const importedFiles: ImportedFile[] = [];
 
-    const readEntry = async (entry: FileSystemEntry, path = '') => {
+    const readDirectoryAllEntries = async (dirReader: FileSystemDirectoryReader): Promise<FileSystemEntry[]> => {
+      const allEntries: FileSystemEntry[] = [];
+      let batch: FileSystemEntry[] = [];
+      do {
+        batch = await new Promise<FileSystemEntry[]>((resolve) => {
+          dirReader.readEntries((res) => resolve(res), () => resolve([]));
+        });
+        allEntries.push(...batch);
+      } while (batch.length > 0);
+      return allEntries;
+    };
+
+    const readEntry = async (entry: FileSystemEntry, path = ''): Promise<void> => {
       if (entry.isFile) {
         const fileEntry = entry as FileSystemFileEntry;
         await new Promise<void>((resolve) => {
-          fileEntry.file((file) => {
-            importedFiles.push({
-              file,
-              name: file.name,
-              relativePath: path ? `${path}/${file.name}` : file.name,
-              type: file.type,
-              size: file.size,
-            });
-            resolve();
-          });
+          fileEntry.file(
+            (file) => {
+              importedFiles.push({
+                file,
+                name: file.name,
+                relativePath: path ? `${path}/${file.name}` : file.name,
+                type: file.type,
+                size: file.size,
+              });
+              resolve();
+            },
+            () => resolve()
+          );
         });
       } else if (entry.isDirectory) {
         const dirEntry = entry as FileSystemDirectoryEntry;
         const dirReader = dirEntry.createReader();
-        const entries = await new Promise<FileSystemEntry[]>((resolve) => {
-          dirReader.readEntries((res) => resolve(res));
-        });
-        for (const child of entries) {
-          await readEntry(child, path ? `${path}/${dirEntry.name}` : dirEntry.name);
-        }
+        const entries = await readDirectoryAllEntries(dirReader);
+        const childPath = path ? `${path}/${dirEntry.name}` : dirEntry.name;
+        await Promise.all(entries.map((child) => readEntry(child, childPath)));
       }
     };
 
     try {
+      const rootPromises: Promise<void>[] = [];
       for (let i = 0; i < items.length; i++) {
         const item = items[i];
         if (item.webkitGetAsEntry) {
           const entry = item.webkitGetAsEntry();
           if (entry) {
-            await readEntry(entry);
+            rootPromises.push(readEntry(entry));
           }
         } else {
           const file = item.getAsFile();
@@ -182,6 +195,8 @@ export default function DropZone() {
           }
         }
       }
+
+      await Promise.all(rootPromises);
 
       if (importedFiles.length === 1 && importedFiles[0].name.toLowerCase().endsWith('.zip')) {
         setLoadingStage('Extracting ZIP archive...');
