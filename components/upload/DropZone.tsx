@@ -17,6 +17,32 @@ export default function DropZone() {
   const [errorMsg, setErrorMsg] = useState<string | null>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
 
+  const isZipFile = async (file: File): Promise<boolean> => {
+    const lowerName = file.name.toLowerCase();
+    if (
+      lowerName.endsWith('.zip') ||
+      file.type === 'application/zip' ||
+      file.type === 'application/x-zip-compressed' ||
+      file.type === 'application/zip-compressed'
+    ) {
+      return true;
+    }
+
+    // Inspect file magic bytes for ZIP header (PK\x03\x04)
+    try {
+      const slice = file.slice(0, 4);
+      const buffer = await slice.arrayBuffer();
+      const bytes = new Uint8Array(buffer);
+      if (bytes.length >= 4 && bytes[0] === 0x50 && bytes[1] === 0x4b && bytes[2] === 0x03 && bytes[3] === 0x04) {
+        return true;
+      }
+    } catch {
+      // ignore slice read errors
+    }
+
+    return false;
+  };
+
   const processFile = async (file: File) => {
     setErrorMsg(null);
 
@@ -26,12 +52,8 @@ export default function DropZone() {
     }
 
     const lowerName = file.name.toLowerCase();
-    const isTxt = lowerName.endsWith('.txt') || file.type === 'text/plain';
-    const isZip =
-      lowerName.endsWith('.zip') ||
-      file.type === 'application/zip' ||
-      file.type === 'application/x-zip-compressed' ||
-      file.type === 'application/zip-compressed';
+    const isZip = await isZipFile(file);
+    const isTxt = lowerName.endsWith('.txt') || file.type === 'text/plain' || (!isZip && !lowerName.includes('.'));
 
     if (!isTxt && !isZip) {
       setErrorMsg('Unsupported file format. Please upload a WhatsApp export .txt file or .zip archive.');
@@ -39,21 +61,8 @@ export default function DropZone() {
     }
 
     try {
-      if (isTxt && !lowerName.endsWith('.zip')) {
-        setLoadingStage('Reading export file...');
-        const text = await file.text();
-        setLoadingStage('Parsing messages...');
-        const chat = parseWhatsAppExport(text);
-
-        if (chat.messages.length === 0) {
-          setErrorMsg('We couldn\'t find any valid WhatsApp messages in this file.');
-          setLoadingStage(null);
-          return;
-        }
-
-        setLoadingStage('Preparing chat...');
-        loadChatData({ chat });
-      } else {
+      if (isZip) {
+        setLoadingStage('Extracting ZIP export archive...');
         const extracted = await processZipExport(file, (stage) => setLoadingStage(stage));
 
         if (extracted.chat.messages.length === 0) {
@@ -67,6 +76,20 @@ export default function DropZone() {
           mediaMap: extracted.mediaMap,
           rawFiles: extracted.rawFiles,
         });
+      } else {
+        setLoadingStage('Reading export file...');
+        const text = await file.text();
+        setLoadingStage('Parsing messages...');
+        const chat = parseWhatsAppExport(text);
+
+        if (chat.messages.length === 0) {
+          setErrorMsg('We couldn\'t find any valid WhatsApp messages in this file.');
+          setLoadingStage(null);
+          return;
+        }
+
+        setLoadingStage('Preparing chat...');
+        loadChatData({ chat });
       }
     } catch (err: unknown) {
       console.error('Error processing chat export:', err);
@@ -157,10 +180,10 @@ export default function DropZone() {
             : 'border-slate-300 dark:border-slate-700 hover:border-emerald-500 dark:hover:border-emerald-500 bg-white dark:bg-slate-900 shadow-sm'
         }`}
       >
+        {/* Unrestricted file picker so native mobile pickers allow selecting any exported WhatsApp zip or txt file */}
         <input
           ref={fileInputRef}
           type="file"
-          accept=".txt,.zip,application/zip,application/x-zip-compressed,text/plain"
           onChange={handleFileChange}
           className="hidden"
         />
