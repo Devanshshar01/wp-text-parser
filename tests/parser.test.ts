@@ -105,6 +105,20 @@ and another line
     expect(chat.messages[5].type).toBe('unknown-media');
   });
 
+  it('parses quoted replies and links to target message ID', () => {
+    const sample = `14/06/2026, 21:00 - Alice: What time is the meeting tomorrow?
+14/06/2026, 21:01 - Bob: > Alice: What time is the meeting
+The meeting is at 10 AM.`;
+
+    const chat = parseWhatsAppExport(sample);
+    expect(chat.messages).toHaveLength(2);
+    expect(chat.messages[1].replyTo).toBeDefined();
+    expect(chat.messages[1].replyTo?.quotedSender).toBe('Alice');
+    expect(chat.messages[1].replyTo?.quotedText).toBe('What time is the meeting');
+    expect(chat.messages[1].replyTo?.targetMessageId).toBe(chat.messages[0].id);
+    expect(chat.stats.replyCount).toBe(1);
+  });
+
   it('handles unicode characters and emojis in sender names and message body', () => {
     const sample = `14/06/2026, 21:00 - Priya 🌸: Namaste! 🙏 Hindi: नमस्ते, how are you?
 14/06/2026, 21:01 - Alex (Co-worker): All good 👍! 🔥🎉`;

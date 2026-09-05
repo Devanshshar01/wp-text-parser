@@ -1,7 +1,7 @@
 'use client';
 
 import React from 'react';
-import { BarChart2, MessageSquare, Image as ImageIcon, Video, Music, FileText, UserCheck } from 'lucide-react';
+import { BarChart2, MessageSquare, Image as ImageIcon, Video, Music, FileText, CornerUpLeft } from 'lucide-react';
 import { useChat } from '@/context/ChatContext';
 
 export default function ChatStatsPanel() {
@@ -37,6 +37,14 @@ export default function ChatStatsPanel() {
         </div>
 
         <div className="bg-white dark:bg-slate-800 border border-slate-200 dark:border-slate-700 rounded-xl p-4 shadow-xs">
+          <CornerUpLeft className="w-4 h-4 text-emerald-600 dark:text-emerald-400 mb-1" />
+          <p className="text-xl font-extrabold text-slate-900 dark:text-slate-100">
+            {(stats.replyCount || 0).toLocaleString()}
+          </p>
+          <p className="text-[11px] text-slate-500">Quoted Replies</p>
+        </div>
+
+        <div className="bg-white dark:bg-slate-800 border border-slate-200 dark:border-slate-700 rounded-xl p-4 shadow-xs">
           <ImageIcon className="w-4 h-4 text-emerald-600 dark:text-emerald-400 mb-1" />
           <p className="text-xl font-extrabold text-slate-900 dark:text-slate-100">
             {stats.imageCount.toLocaleString()}
@@ -66,14 +74,6 @@ export default function ChatStatsPanel() {
             {stats.documentCount.toLocaleString()}
           </p>
           <p className="text-[11px] text-slate-500">Documents</p>
-        </div>
-
-        <div className="bg-white dark:bg-slate-800 border border-slate-200 dark:border-slate-700 rounded-xl p-4 shadow-xs">
-          <UserCheck className="w-4 h-4 text-emerald-600 dark:text-emerald-400 mb-1" />
-          <p className="text-xl font-extrabold text-slate-900 dark:text-slate-100">
-            {chat.participants.length}
-          </p>
-          <p className="text-[11px] text-slate-500">Participants</p>
         </div>
       </div>
 

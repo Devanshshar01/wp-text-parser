@@ -8,6 +8,32 @@ export type MessageType =
   | 'system'
   | 'unknown-media';
 
+export interface ImportedFile {
+  file: File;
+  name: string;
+  relativePath: string;
+  type: string;
+  size: number;
+}
+
+export interface MediaAsset {
+  id: string;
+  file: File | Blob;
+  filename: string;
+  relativePath: string;
+  mimeType: string;
+  extension: string;
+  size: number;
+  objectUrl?: string;
+}
+
+export interface ReplyReference {
+  targetMessageId?: string;
+  quotedSender?: string;
+  quotedText?: string;
+  quotedMediaType?: MessageType;
+}
+
 export interface Message {
   id: string;
   timestamp: Date;
@@ -18,6 +44,8 @@ export interface Message {
   mediaUrl?: string;
   mediaMimeType?: string;
   mediaSize?: number;
+  mediaAssets?: MediaAsset[];
+  replyTo?: ReplyReference;
   isSystem?: boolean;
   raw?: string;
 }
@@ -32,6 +60,7 @@ export interface ChatStats {
   documentCount: number;
   stickerCount: number;
   systemCount: number;
+  replyCount: number;
   participantCounts: Record<string, number>;
   firstMessageDate: Date | null;
   lastMessageDate: Date | null;
@@ -45,6 +74,7 @@ export interface ParsedChat {
   stats: ChatStats;
   warnings?: string[];
   mediaFiles?: Record<string, File | Blob>;
+  mediaMap?: Map<string, MediaAsset[]>;
 }
 
 export interface RawMediaFile {

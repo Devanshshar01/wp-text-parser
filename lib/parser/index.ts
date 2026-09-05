@@ -1,4 +1,4 @@
-import { Message, MessageType, ParsedChat, ChatStats } from '../../types';
+import { Message, MessageType, ParsedChat, ChatStats, ReplyReference } from '../../types';
 
 interface HeaderMatch {
   dateStr: string;
@@ -107,12 +107,137 @@ export function parseWhatsAppDateTime(dateStr: string, timeStr: string): Date {
   return dateObj;
 }
 
+export function detectMediaTypeAndFilename(text: string): {
+  type: MessageType;
+  filename?: string;
+  filenames?: string[];
+} {
+  const allMedia = extractAllMediaFilenames(text);
+  if (allMedia.length === 0) {
+    if (/^<media omitted>$/i.test(text.trim()) || /<medien ausgeschlossen>/i.test(text.trim())) {
+      return { type: 'unknown-media' };
+    }
+    return { type: 'text' };
+  }
+
+  const filenames = allMedia.map((m) => m.filename);
+  return {
+    type: allMedia[0].type,
+    filename: filenames[0],
+    filenames: filenames.length > 1 ? filenames : undefined,
+  };
+}
+
+export function extractAllMediaFilenames(text: string): { type: MessageType; filename: string }[] {
+  const results: { type: MessageType; filename: string }[] = [];
+  const regex = /([^\s()"'`]+\.[a-zA-Z0-9]{2,5})\s*\(file attached\)|<attached:\s*([^\s>]+)>|\[([^\s\]()]+\.[a-zA-Z0-9]{2,5})\]\s*\(file attached\)/gi;
+
+  let match: RegExpExecArray | null;
+  while ((match = regex.exec(text)) !== null) {
+    const fn = match[1] || match[2] || match[3];
+    if (fn) {
+      results.push({
+        filename: fn,
+        type: getMediaTypeFromFilename(fn),
+      });
+    }
+  }
+
+  if (results.length === 0) {
+    const trimmed = text.trim();
+    const directFileMatch = trimmed.match(/^([a-zA-Z0-9_\-\s.]+\.(?:jpg|jpeg|png|gif|webp|mp4|m4v|mov|mkv|3gp|mp3|ogg|opus|wav|m4a|pdf|doc|docx|txt|zip|vcf))$/i);
+    if (directFileMatch) {
+      const fn = directFileMatch[1].trim();
+      results.push({
+        filename: fn,
+        type: getMediaTypeFromFilename(fn),
+      });
+    }
+  }
+
+  return results;
+}
+
+export function getMediaTypeFromFilename(filename: string): MessageType {
+  const ext = filename.split('.').pop()?.toLowerCase() || '';
+  if (['jpg', 'jpeg', 'png', 'gif', 'webp'].includes(ext)) {
+    const lower = filename.toLowerCase();
+    if (lower.includes('sticker') || lower.startsWith('stk')) {
+      return 'sticker';
+    }
+    return 'image';
+  }
+  if (['mp4', 'm4v', 'mov', 'mkv', '3gp', 'webm'].includes(ext)) {
+    return 'video';
+  }
+  if (['mp3', 'ogg', 'opus', 'wav', 'm4a', 'aac'].includes(ext)) {
+    return 'audio';
+  }
+  if (['pdf', 'doc', 'docx', 'txt', 'zip', 'csv', 'xlsx', 'ppt', 'pptx'].includes(ext)) {
+    return 'document';
+  }
+  return 'unknown-media';
+}
+
+/**
+ * Extract quote / reply information if explicitly present in message text.
+ * Handles `> Quoted line` markdown blocks, `> Sender: message`, or `[Date, Time] Sender: Message`.
+ */
+export function extractReplyInfo(text: string): {
+  replyTo?: ReplyReference;
+  bodyText: string;
+} {
+  const lines = text.split('\n');
+  const quoteLines: string[] = [];
+  const bodyLines: string[] = [];
+
+  let inQuote = true;
+
+  for (let i = 0; i < lines.length; i++) {
+    const line = lines[i];
+    if (inQuote && line.trim().startsWith('>')) {
+      quoteLines.push(line.trim().replace(/^>\s*/, ''));
+    } else {
+      inQuote = false;
+      bodyLines.push(line);
+    }
+  }
+
+  if (quoteLines.length === 0) {
+    return { bodyText: text };
+  }
+
+  const rawQuote = quoteLines.join('\n').trim();
+  let quotedSender: string | undefined;
+  let quotedText = rawQuote;
+
+  // Check if quote starts with `Sender: text` or `[Date, Time] Sender: text`
+  const bracketSenderMatch = rawQuote.match(/^(?:\[[^\]]+\]\s*)?([^:\n]+):\s*([\s\S]*)$/);
+  if (bracketSenderMatch && bracketSenderMatch[1].length < 50) {
+    quotedSender = bracketSenderMatch[1].trim();
+    quotedText = bracketSenderMatch[2].trim();
+  }
+
+  const mediaInfo = detectMediaTypeAndFilename(quotedText);
+
+  return {
+    replyTo: {
+      quotedSender,
+      quotedText,
+      quotedMediaType: mediaInfo.type !== 'text' ? mediaInfo.type : undefined,
+    },
+    bodyText: bodyLines.join('\n').trim(),
+  };
+}
+
 export function parseBodyContent(body: string): {
   sender?: string;
   isSystem: boolean;
   text: string;
   type: MessageType;
   mediaFilename?: string;
+  mediaFilenames?: string[];
+  replyTo?: ReplyReference;
 } {
   const colonIdx = body.indexOf(':');
 
@@ -143,7 +268,8 @@ export function parseBodyContent(body: string): {
     };
   }
 
-  const mediaInfo = detectMediaTypeAndFilename(textContent);
+  const { replyTo, bodyText } = extractReplyInfo(textContent);
+  const mediaInfo = detectMediaTypeAndFilename(bodyText.length > 0 ? bodyText : textContent);
 
   return {
     sender: possibleSender,
@@ -151,55 +277,9 @@ export function parseBodyContent(body: string): {
     text: textContent,
     type: mediaInfo.type,
     mediaFilename: mediaInfo.filename,
+    mediaFilenames: mediaInfo.filenames,
+    replyTo,
   };
-}
-
-export function detectMediaTypeAndFilename(text: string): {
-  type: MessageType;
-  filename?: string;
-} {
-  const trimmed = text.trim();
-
-  const attachedMatch =
-    trimmed.match(/^([^\s()]+\.[a-zA-Z0-9]{2,5})\s*\(file attached\)$/i) ||
-    trimmed.match(/^<attached:\s*([^\s>]+)>/i) ||
-    trimmed.match(/^(?:\[|\()?([^\s\]()]+\.[a-zA-Z0-9]{2,5})(?:\]|\))?\s*\(file attached\)$/i);
-
-  let filename = attachedMatch ? attachedMatch[1] : undefined;
-
-  if (!filename) {
-    const directFileMatch = trimmed.match(/^([a-zA-Z0-9_\-\s.]+\.(?:jpg|jpeg|png|gif|webp|mp4|m4v|mov|mkv|3gp|mp3|ogg|opus|wav|m4a|pdf|doc|docx|txt|zip|vcf))$/i);
-    if (directFileMatch) {
-      filename = directFileMatch[1].trim();
-    }
-  }
-
-  if (filename) {
-    const ext = filename.split('.').pop()?.toLowerCase() || '';
-    if (['jpg', 'jpeg', 'png', 'gif', 'webp'].includes(ext)) {
-      const lower = filename.toLowerCase();
-      if (lower.includes('sticker') || lower.startsWith('stk')) {
-        return { type: 'sticker', filename };
-      }
-      return { type: 'image', filename };
-    }
-    if (['mp4', 'm4v', 'mov', 'mkv', '3gp', 'webm'].includes(ext)) {
-      return { type: 'video', filename };
-    }
-    if (['mp3', 'ogg', 'opus', 'wav', 'm4a', 'aac'].includes(ext)) {
-      return { type: 'audio', filename };
-    }
-    if (['pdf', 'doc', 'docx', 'txt', 'zip', 'csv', 'xlsx', 'ppt', 'pptx'].includes(ext)) {
-      return { type: 'document', filename };
-    }
-    return { type: 'unknown-media', filename };
-  }
-
-  if (/^<media omitted>$/i.test(trimmed) || /<medien ausgeschlossen>/i.test(trimmed)) {
-    return { type: 'unknown-media' };
-  }
-
-  return { type: 'text' };
 }
 
 function generateMessageId(index: number, timestamp: Date): string {
@@ -220,8 +300,54 @@ export function parseWhatsAppExport(rawText: string): ParsedChat {
     textLines: string[];
     type: MessageType;
     mediaFilename?: string;
+    mediaFilenames?: string[];
+    replyTo?: ReplyReference;
     rawLines: string[];
   } | null = null;
+
+  const pushMessage = (builder: typeof currentMsgBuilder) => {
+    if (!builder) return;
+    const fullText = builder.textLines.join('\n');
+    const msgId = generateMessageId(messages.length, builder.timestamp);
+
+    let replyTo = builder.replyTo;
+    if (!replyTo) {
+      // Re-check full text for reply quotes if line-buffered text had quotes
+      const replyCheck = extractReplyInfo(fullText);
+      if (replyCheck.replyTo) {
+        replyTo = replyCheck.replyTo;
+      }
+    }
+
+    // Try linking replyTo targetMessageId to an earlier message
+    if (replyTo && replyTo.quotedText) {
+      const targetText = replyTo.quotedText.toLowerCase().trim();
+      const targetSender = replyTo.quotedSender?.toLowerCase().trim();
+
+      for (let i = messages.length - 1; i >= 0; i--) {
+        const prev = messages[i];
+        if (targetSender && prev.sender?.toLowerCase().trim() !== targetSender) {
+          continue;
+        }
+        if (prev.text && prev.text.toLowerCase().includes(targetText.slice(0, 30))) {
+          replyTo.targetMessageId = prev.id;
+          break;
+        }
+      }
+    }
+
+    messages.push({
+      id: msgId,
+      timestamp: builder.timestamp,
+      sender: builder.sender,
+      text: fullText,
+      type: builder.type,
+      mediaFilename: builder.mediaFilename,
+      replyTo,
+      isSystem: builder.isSystem,
+      raw: builder.rawLines.join('\n'),
+    });
+  };
 
   for (let i = 0; i < lines.length; i++) {
     const line = lines[i];
@@ -231,17 +357,7 @@ export function parseWhatsAppExport(rawText: string): ParsedChat {
 
     if (headerMatch) {
       if (currentMsgBuilder) {
-        const fullText = currentMsgBuilder.textLines.join('\n');
-        messages.push({
-          id: generateMessageId(messages.length, currentMsgBuilder.timestamp),
-          timestamp: currentMsgBuilder.timestamp,
-          sender: currentMsgBuilder.sender,
-          text: fullText,
-          type: currentMsgBuilder.type,
-          mediaFilename: currentMsgBuilder.mediaFilename,
-          isSystem: currentMsgBuilder.isSystem,
-          raw: currentMsgBuilder.rawLines.join('\n'),
-        });
+        pushMessage(currentMsgBuilder);
       }
 
       const timestamp = parseWhatsAppDateTime(headerMatch.dateStr, headerMatch.timeStr);
@@ -258,6 +374,8 @@ export function parseWhatsAppExport(rawText: string): ParsedChat {
         textLines: [parsedBody.text],
         type: parsedBody.type,
         mediaFilename: parsedBody.mediaFilename,
+        mediaFilenames: parsedBody.mediaFilenames,
+        replyTo: parsedBody.replyTo,
         rawLines: [line],
       };
     } else if (currentMsgBuilder) {
@@ -269,17 +387,7 @@ export function parseWhatsAppExport(rawText: string): ParsedChat {
   }
 
   if (currentMsgBuilder) {
-    const fullText = currentMsgBuilder.textLines.join('\n');
-    messages.push({
-      id: generateMessageId(messages.length, currentMsgBuilder.timestamp),
-      timestamp: currentMsgBuilder.timestamp,
-      sender: currentMsgBuilder.sender,
-      text: fullText,
-      type: currentMsgBuilder.type,
-      mediaFilename: currentMsgBuilder.mediaFilename,
-      isSystem: currentMsgBuilder.isSystem,
-      raw: currentMsgBuilder.rawLines.join('\n'),
-    });
+    pushMessage(currentMsgBuilder);
   }
 
   const participants = Array.from(participantsSet);
@@ -300,6 +408,7 @@ export function parseWhatsAppExport(rawText: string): ParsedChat {
     documentCount: 0,
     stickerCount: 0,
     systemCount: 0,
+    replyCount: 0,
     participantCounts: {},
     firstMessageDate: messages.length > 0 ? messages[0].timestamp : null,
     lastMessageDate: messages.length > 0 ? messages[messages.length - 1].timestamp : null,
@@ -314,6 +423,10 @@ export function parseWhatsAppExport(rawText: string): ParsedChat {
 
     if (m.isSystem) {
       stats.systemCount++;
+    }
+
+    if (m.replyTo) {
+      stats.replyCount++;
     }
 
     switch (m.type) {
