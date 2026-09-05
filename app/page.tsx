@@ -1,6 +1,6 @@
 'use client';
 
-import React from 'react';
+import React, { useEffect } from 'react';
 import { useChat } from '@/context/ChatContext';
 import DropZone from '@/components/upload/DropZone';
 import ChatHeader from '@/components/chat/ChatHeader';
@@ -13,6 +13,20 @@ import MediaLightbox from '@/components/media/MediaLightbox';
 
 export default function Home() {
   const { chat, activeView } = useChat();
+
+  // Attach window beforeunload confirmation listener when chat is loaded
+  useEffect(() => {
+    if (!chat) return;
+
+    const handleBeforeUnload = (e: BeforeUnloadEvent) => {
+      e.preventDefault();
+      e.returnValue = 'You have an active chat loaded. Are you sure you want to exit?';
+      return e.returnValue;
+    };
+
+    window.addEventListener('beforeunload', handleBeforeUnload);
+    return () => window.removeEventListener('beforeunload', handleBeforeUnload);
+  }, [chat]);
 
   if (!chat) {
     return (

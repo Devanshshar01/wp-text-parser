@@ -15,6 +15,7 @@ import {
   Users,
   User,
   Palette,
+  AlertTriangle,
 } from 'lucide-react';
 import { useChat } from '@/context/ChatContext';
 import WallpaperModal from './WallpaperModal';
@@ -39,6 +40,7 @@ export default function ChatHeader() {
   const [isEditingTitle, setIsEditingTitle] = useState(false);
   const [titleInput, setTitleInput] = useState('');
   const [isWallpaperOpen, setIsWallpaperOpen] = useState(false);
+  const [showExitConfirm, setShowExitConfirm] = useState(false);
 
   if (!chat) return null;
 
@@ -68,22 +70,61 @@ export default function ChatHeader() {
     }
   };
 
+  const handleConfirmExit = () => {
+    setShowExitConfirm(false);
+    clearChatData();
+  };
+
   return (
     <>
       <WallpaperModal isOpen={isWallpaperOpen} onClose={() => setIsWallpaperOpen(false)} />
+
+      {/* Exit Confirmation Dialog */}
+      {showExitConfirm && (
+        <div className="fixed inset-0 z-50 bg-black/70 backdrop-blur-xs flex items-center justify-center p-4">
+          <div className="bg-white dark:bg-[#111b21] border border-slate-200 dark:border-slate-800 rounded-2xl max-w-sm w-full p-6 shadow-2xl">
+            <div className="flex items-center gap-3 text-amber-500 mb-3">
+              <div className="p-2 bg-amber-100 dark:bg-amber-950/80 rounded-xl">
+                <AlertTriangle className="w-6 h-6" />
+              </div>
+              <h3 className="text-base font-bold text-slate-900 dark:text-slate-100">
+                Close Conversation?
+              </h3>
+            </div>
+            <p className="text-xs text-slate-600 dark:text-slate-300 mb-6 leading-relaxed">
+              Are you sure you want to exit? The imported conversation data will be cleared from your browser session.
+            </p>
+            <div className="flex items-center justify-end gap-2">
+              <button
+                type="button"
+                onClick={() => setShowExitConfirm(false)}
+                className="px-4 py-2 rounded-xl text-xs font-semibold bg-slate-100 dark:bg-slate-800 text-slate-700 dark:text-slate-200 hover:bg-slate-200 dark:hover:bg-slate-700 transition-colors"
+              >
+                Cancel
+              </button>
+              <button
+                type="button"
+                onClick={handleConfirmExit}
+                className="px-4 py-2 rounded-xl text-xs font-semibold bg-red-600 text-white hover:bg-red-700 transition-colors"
+              >
+                Leave Chat
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
 
       <header className="sticky top-0 z-30 bg-[#075e54] dark:bg-[#1f2c34] text-white px-3 sm:px-4 py-2.5 flex items-center justify-between gap-2 shadow-md">
         <div className="flex items-center gap-2 min-w-0 flex-1">
           <button
             type="button"
-            onClick={clearChatData}
+            onClick={() => setShowExitConfirm(true)}
             title="Load another chat archive"
             className="p-1.5 text-white/90 hover:bg-white/10 rounded-full transition-colors shrink-0"
           >
             <ArrowLeft className="w-5 h-5" />
           </button>
 
-          {/* Contact / Group Avatar */}
           <div className="w-10 h-10 rounded-full bg-[#128c7e] dark:bg-[#00a884] text-white flex items-center justify-center font-bold text-sm shrink-0 shadow-xs border border-white/20">
             {chat.isGroup ? <Users className="w-5 h-5" /> : <User className="w-5 h-5" />}
           </div>
@@ -132,7 +173,6 @@ export default function ChatHeader() {
           </div>
         </div>
 
-        {/* Search bar popover */}
         {isSearching && (
           <div className="absolute inset-x-2 top-2 z-40 bg-[#128c7e] dark:bg-[#1f2c34] p-1.5 rounded-xl border border-white/20 shadow-xl flex items-center gap-2">
             <Search className="w-4 h-4 text-white/70 ml-2 shrink-0" />
@@ -178,7 +218,6 @@ export default function ChatHeader() {
           </div>
         )}
 
-        {/* Navigation Action Buttons */}
         <div className="flex items-center gap-0.5 sm:gap-1 shrink-0">
           <button
             type="button"
